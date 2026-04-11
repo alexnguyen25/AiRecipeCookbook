@@ -20,4 +20,5 @@ pool.on('error', (err) => {
 
 export default {
     query: (text, params) => pool.query(text, params),
+    pool,
 };

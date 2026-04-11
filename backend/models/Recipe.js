@@ -1,51 +1,155 @@
 import db from '../config/db.js';
 
 class Recipe {
+    /** Minutes as integer; Gemini often returns strings like "15" or "15 minutes". */
+    static _parseTimeMinutes(value) {
+        if (value == null || value === '') return null;
+        if (typeof value === 'number' && Number.isFinite(value)) return Math.round(value);
+        const m = String(value).match(/\d+/);
+        return m ? parseInt(m[0], 10) : null;
+    }
+
+    static _toNumber(value) {
+        if (value == null || value === '') return null;
+        const n = Number(value);
+        return Number.isFinite(n) ? n : null;
+    }
+
+    /** Strip characters that can break JSON / Postgres json parsers */
+    static _sanitizeText(s) {
+        return String(s ?? '').replace(/\u0000/g, '');
+    }
+
+    /** Turn one step (string | object) into a single display string */
+    static _instructionStepToString(step) {
+        if (step == null) return '';
+        if (typeof step === 'string') return Recipe._sanitizeText(step);
+        if (typeof step === 'object') {
+            const o = step;
+            const text =
+                o.text ?? o.instruction ?? o.description ?? o.detail ?? (typeof o.step === 'string' ? o.step : null);
+            if (text != null) return Recipe._sanitizeText(String(text));
+            try {
+                return Recipe._sanitizeText(JSON.stringify(o));
+            } catch {
+                return '';
+            }
+        }
+        return Recipe._sanitizeText(String(step));
+    }
+
+    /**
+     * Gemini may return string[], objects, or a JSON string. We always persist a JSON array of strings.
+     */
+    static _flattenInstructionsToStrings(raw) {
+        if (raw == null) return [];
+
+        let v = raw;
+        if (typeof v === 'string') {
+            const t = v.trim();
+            if (t.startsWith('[')) {
+                try {
+                    v = JSON.parse(t);
+                } catch {
+                    return [Recipe._sanitizeText(t)];
+                }
+            } else {
+                return [Recipe._sanitizeText(t)];
+            }
+        }
+
+        if (!Array.isArray(v)) {
+            if (typeof v === 'object') {
+                const keys = Object.keys(v);
+                const numericKeys = keys.length > 0 && keys.every((k) => /^\d+$/.test(k));
+                if (numericKeys) {
+                    v = keys
+                        .sort((a, b) => Number(a) - Number(b))
+                        .map((k) => v[k]);
+                } else {
+                    return [Recipe._instructionStepToString(v)];
+                }
+            } else {
+                return [Recipe._instructionStepToString(v)];
+            }
+        }
+
+        return v.map((step) => Recipe._instructionStepToString(step));
+    }
+
+    /** Valid JSON text for Postgres jsonb (array of strings only) */
+    static _instructionsJsonText(raw) {
+        return JSON.stringify(Recipe._flattenInstructionsToStrings(raw));
+    }
+
     /**
      * Create a new recipe with ingredients and nutrition
      */
-
     static async create(userId, recipeData) {
+        const {
+            name,
+            description,
+            cuisine_type,
+            difficulty,
+            prep_time,
+            cook_time,
+            servings,
+            instructions,
+            dietary_tags = [],
+            user_notes,
+            image_url,
+            ingredients = [],
+            nutrition = {},
+        } = recipeData;
+
+        if (!name || String(name).trim() === '') {
+            throw new Error('Recipe name is required');
+        }
+
+        const prepTimeInt = Recipe._parseTimeMinutes(prep_time);
+        const cookTimeInt = Recipe._parseTimeMinutes(cook_time);
+        const servingsInt = Math.max(1, parseInt(String(servings), 10) || 4);
+        const tags = Array.isArray(dietary_tags) ? dietary_tags : [];
+
         const client = await db.pool.connect();
+        let recipeId;
         try {
             await client.query('BEGIN');
 
-            const{
-                name,
-                description,
-                cuisine_type,
-                difficulty,
-                prep_time,
-                cook_time,
-                servings,
-                instructions,
-                dietary_tags = [],
-                user_notes,
-                image_url,
-                ingredients = [],
-                nutrition = {}
-            } = recipeData;
+            const instructionsJson = Recipe._instructionsJsonText(instructions);
 
-            // Insert recipe
             const recipeResult = await client.query(
                 `INSERT INTO recipes
                 (user_id, name, description, cuisine_type, difficulty, prep_time, cook_time, servings, instructions, dietary_tags, user_notes, image_url)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)
                 RETURNING *`,
-                [userId, name, description, cuisine_type, difficulty, prep_time, cook_time, servings, instructions, dietary_tags, user_notes, image_url]
+                [
+                    userId,
+                    name,
+                    description ?? null,
+                    cuisine_type ?? null,
+                    difficulty ?? 'medium',
+                    prepTimeInt,
+                    cookTimeInt,
+                    servingsInt,
+                    instructionsJson,
+                    tags,
+                    user_notes ?? null,
+                    image_url ?? null,
+                ]
             );
 
             const recipe = recipeResult.rows[0];
+            recipeId = recipe.id;
 
-            // Insert ingredients
             if (ingredients.length > 0) {
-                const ingreValues = ingredients.map((ing, idx) => 
-                    `($1, $${idx * 3 + 2}, $${idx * 3 + 3}, $${idx * 3 + 4})`
-                ).join(', ');
-
+                const ingreValues = ingredients
+                    .map((ing, idx) => `($1, $${idx * 3 + 2}, $${idx * 3 + 3}, $${idx * 3 + 4})`)
+                    .join(', ');
                 const ingredientParams = [recipe.id];
-                ingredients.forEach(ing => {
-                    ingredientParams.push(ing.name, ing.quantity, ing.unit);
+                ingredients.forEach((ing) => {
+                    const qty = Recipe._toNumber(ing.quantity);
+                    ingredientParams.push(ing?.name ?? 'Unknown', qty != null ? qty : 0, ing?.unit ?? 'pieces');
                 });
 
                 await client.query(
@@ -53,39 +157,38 @@ class Recipe {
                     VALUES ${ingreValues}`,
                     ingredientParams
                 );
+            }
+
+            const nut = nutrition && typeof nutrition === 'object' ? nutrition : {};
+            const cal = Recipe._toNumber(nut.calories);
+            const prot = Recipe._toNumber(nut.protein);
+            const carbs = Recipe._toNumber(nut.carbs);
+            const fats = Recipe._toNumber(nut.fats);
+            const fiber = Recipe._toNumber(nut.fiber);
+            if ([cal, prot, carbs, fats, fiber].some((v) => v != null)) {
+                await client.query(
+                    `INSERT INTO recipe_nutrition (recipe_id, calories, protein, carbs, fats, fiber)
+                    VALUES ($1, $2, $3, $4, $5, $6)`,
+                    [recipe.id, cal, prot, carbs, fats, fiber]
+                );
+            }
+
+            await client.query('COMMIT');
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
         }
 
-        // Insert nutrition
-        if (nutrition && Object.keys(nutrition).length > 0) {
-            await client.query(
-                `INSERT INTO recipe_nutrition (recipe_id, calories, protein, carbs, fats, fiber)
-                VALUES ($1, $2, $3, $4, $5, $6)`,
-                [recipe.id, nutrition.calories, nutrition.protein, nutrition.carbs, nutrition.fats, nutrition.fiber]
-            );
-        }
-
-        await client.query('COMMIT');
-        
-        //Fetch complete recipe with ingredients and nutrition
-        return await this.findById(recipe.id);
+        return await this.findById(recipeId, userId);
     }
-    catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-    }
-    finally {
-        client.release();
-    }
-}
 
     /**
      * Find a recipe by ID with ingredients and nutrition
      */
-    static async findById(id) {
-        const recipeResult = await db.query(
-            `SELECT * FROM recipes WHERE id = $1 AND user_id = $2`,
-            [id, userId]
-        );  
+    static async findById(id, userId) {
+        const recipeResult = await db.query(`SELECT * FROM recipes WHERE id = $1 AND user_id = $2`, [id, userId]);
 
         if (recipeResult.rows.length === 0) {
             return null;
@@ -93,13 +196,11 @@ class Recipe {
 
         const recipe = recipeResult.rows[0];
 
-        // Get ingredients
         const ingredientsResult = await db.query(
             `SELECT ingredient_name as name, quantity, unit FROM recipe_ingredients WHERE recipe_id = $1`,
             [id]
         );
-        
-        // Get nutrition
+
         const nutritionResult = await db.query(
             `SELECT calories, protein, carbs, fats, fiber FROM recipe_nutrition WHERE recipe_id = $1`,
             [id]
@@ -107,8 +208,7 @@ class Recipe {
 
         const nutrition = nutritionResult.rows[0] || null;
 
-        return { ...recipe, ingredients, nutrition };
-        
+        return { ...recipe, ingredients: ingredientsResult.rows, nutrition };
     }
 
     /**
@@ -201,20 +301,34 @@ class Recipe {
 
         const result = await db.query(
             `UPDATE recipes
-            SET name = COALESCE($!, name),
+            SET name = COALESCE($1, name),
             description = COALESCE($2, description),
             cuisine_type = COALESCE($3, cuisine_type),
             difficulty = COALESCE($4, difficulty),
             prep_time = COALESCE($5, prep_time),
             cook_time = COALESCE($6, cook_time),
             servings = COALESCE($7, servings),
-            instructions = COALESCE($8, instructions),
+            instructions = COALESCE($8::jsonb, instructions),
             dietary_tags = COALESCE($9, dietary_tags),
             user_notes = COALESCE($10, user_notes),
             image_url = COALESCE($11, image_url)
             WHERE id = $12 AND user_id = $13
             RETURNING *`,
-            [name, description, cuisine_type, difficulty, prep_time, cook_time, servings, instructions ?JSON.stringify(instructions) : null, dietary_tags, user_notes, image_url, id, userId]
+            [
+                name,
+                description,
+                cuisine_type,
+                difficulty,
+                prep_time,
+                cook_time,
+                servings,
+                instructions != null ? Recipe._instructionsJsonText(instructions) : null,
+                dietary_tags,
+                user_notes,
+                image_url,
+                id,
+                userId,
+            ]
         );
 
         return result.rows[0];
