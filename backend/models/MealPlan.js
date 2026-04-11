@@ -5,7 +5,7 @@ class MealPlan {
      * Create a new meal plan
      */
     static async create(userId, mealPlanData) {
-        const { recipe_id, planned_date, meal_date, meal_type } = mealData;
+        const { recipe_id, planned_date, meal_date, meal_type } = mealPlanData;
         const date = planned_date || meal_date;
 
         const result = await db.query(
@@ -59,7 +59,7 @@ class MealPlan {
             FROM meal_plans mp
             JOIN recipes r ON mp.recipe_id = r.id
             WHERE mp.user_id = $1 AND mp.meal_date >= CURRENT_DATE
-            ORDER BY mp.meal_date ASC
+            ORDER BY mp.meal_date ASC,
             CASE mp.meal_type 
             WHEN 'breakfast' THEN 1
             WHEN 'lunch' THEN 2
@@ -76,7 +76,7 @@ class MealPlan {
      * Delete a meal plan by ID
      */
     static async delete(id, userId) {
-        await db.query(
+        const result = await db.query(
             `DELETE FROM meal_plans WHERE id = $1 AND user_id = $2 RETURNING *`,
             [id, userId]
         );
@@ -89,7 +89,7 @@ class MealPlan {
     static async getStats(userId) {
         const result = await db.query(
             `SELECT
-            COUNT(*) as total_planned_meals
+            COUNT(*) as total_planned_meals,
             COUNT(*) FILTER (WHERE meal_date >= CURRENT_DATE AND meal_date < CURRENT_DATE + INTERVAL '7 days') as this_week_count
             FROM meal_plans
             WHERE user_id = $1`,
@@ -97,5 +97,6 @@ class MealPlan {
         );
         return result.rows[0];
     }
-    
 }
+
+export default MealPlan;

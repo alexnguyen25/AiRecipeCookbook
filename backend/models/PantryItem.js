@@ -93,10 +93,11 @@ class PantryItem {
     }
 
     static async delete(id, userId) {
-        await db.query(
+        const result = await db.query(
             `DELETE FROM pantry_items WHERE id = $1 AND user_id = $2 RETURNING *`,
             [id, userId]
         );
+        return result.rows[0];
     }
 
     static async getStats(userId) {

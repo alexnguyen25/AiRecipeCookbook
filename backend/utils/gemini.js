@@ -9,6 +9,40 @@ if (!process.env.GEMINI_API_KEY) {
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
+/** Avoid printing raw API keys in logs */
+function redactSecrets(text) {
+    if (typeof text !== 'string') return text;
+    return text.replace(/AIza[0-9A-Za-z_-]{20,}/g, '[REDACTED]');
+}
+
+/**
+ * Turn @google/genai ApiError into a short, user-facing message (no secrets).
+ */
+function userFacingGeminiError(error) {
+    const status = error?.status ?? error?.statusCode;
+    let raw = typeof error?.message === 'string' ? error.message : String(error);
+
+    try {
+        const parsed = JSON.parse(raw);
+        const inner = parsed?.error?.message ?? parsed?.message;
+        if (inner) raw = inner;
+    } catch {
+        /* message is not JSON */
+    }
+
+    if (status === 403 && /suspended|CONSUMER_SUSPENDED|Permission denied/i.test(raw)) {
+        return 'Your Google AI API key or Cloud project is suspended or blocked. Create a new API key in Google AI Studio, enable the Generative Language API, and update GEMINI_API_KEY in .env.';
+    }
+    if (status === 401 || status === 403) {
+        return 'Gemini API access was denied. Verify GEMINI_API_KEY, billing, and API restrictions in Google Cloud / AI Studio.';
+    }
+    if (status === 429) {
+        return 'Gemini API rate limit reached. Try again in a moment.';
+    }
+    const short = redactSecrets(raw);
+    return short.length > 220 ? `${short.slice(0, 220)}…` : short;
+}
+
 export const generateRecipe = async (
     ingredients,
     dietaryRestrictions = [],
@@ -69,12 +103,19 @@ Please provide a complete recipe in the following JSON format (return only valid
 Make sure the recipe is creative, delicious, and uses the provided ingredients effectively.`;
 
     try {
+        if (!process.env.GEMINI_API_KEY) {
+            throw new Error('GEMINI_API_KEY is not configured on the server.');
+        }
+
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
-            contents: prompt
+            contents: prompt,
         });
 
-        const generatedText = response.text.trim();
+        const generatedText = response.text?.trim();
+        if (!generatedText) {
+            throw new Error('No text returned from the model. Try again.');
+        }
 
         let jsonText = generatedText;
         if (jsonText.startsWith('```json')) {
@@ -85,8 +126,8 @@ Make sure the recipe is creative, delicious, and uses the provided ingredients e
 
         return JSON.parse(jsonText);
     } catch (error) {
-        console.error('Error generating recipe:', error);
-        throw new Error('Failed to generate recipe. Please try again.');
+        console.error('Error generating recipe:', redactSecrets(error?.message || error));
+        throw new Error(userFacingGeminiError(error));
     }
 };
 
@@ -108,7 +149,10 @@ Each suggestion should be a brief appetizing description (1–2 sentences max).`
             contents: prompt
         });
 
-        let generatedText = response.text.trim();
+        let generatedText = response.text?.trim();
+        if (!generatedText) {
+            throw new Error('No text returned from the model.');
+        }
 
         if (generatedText.startsWith('```json')) {
             generatedText = generatedText.replace(/```json\n?/g, '').replace(/\n?```/g, '');
@@ -118,8 +162,8 @@ Each suggestion should be a brief appetizing description (1–2 sentences max).`
 
         return JSON.parse(generatedText);
     } catch (error) {
-        console.error('Error generating pantry suggestions:', error);
-        throw new Error('Failed to generate pantry suggestions. Please try again.');
+        console.error('Error generating pantry suggestions:', redactSecrets(error?.message || error));
+        throw new Error(userFacingGeminiError(error));
     }
 };
 
@@ -138,7 +182,10 @@ to the recipe and helpful for the cook. Return only a JSON array of strings, no 
             contents: prompt
         });
 
-        let generatedText = response.text.trim();
+        let generatedText = response.text?.trim();
+        if (!generatedText) {
+            throw new Error('No text returned from the model.');
+        }
 
         if (generatedText.startsWith('```json')) {
             generatedText = generatedText.replace(/```json\n?/g, '').replace(/\n?```/g, '');
@@ -148,8 +195,8 @@ to the recipe and helpful for the cook. Return only a JSON array of strings, no 
 
         return JSON.parse(generatedText);
     } catch (error) {
-        console.error('Error generating cooking tips:', error);
-        throw new Error('Failed to generate cooking tips. Please try again.');
+        console.error('Error generating cooking tips:', redactSecrets(error?.message || error));
+        throw new Error(userFacingGeminiError(error));
     }
 };
 

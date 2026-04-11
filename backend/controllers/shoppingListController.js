@@ -154,6 +154,23 @@ export const clearChecked = async (req, res, next) => {
 };
 
 /**
+ * Delete all shopping list items
+ */
+export const clearAll = async (req, res, next) => {
+    try {
+        const items = await ShoppingList.clearAll(req.user.id);
+        res.json({
+            success: true,
+            message: 'Shopping list cleared successfully',
+            data: { items }
+        });
+    }
+    catch (error) {
+        next(error);
+    }
+};
+
+/**
  * Add checked items to pantry
  */
 export const addCheckedToPantry = async (req, res, next) => {

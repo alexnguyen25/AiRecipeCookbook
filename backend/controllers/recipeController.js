@@ -1,6 +1,9 @@
 import Recipe from '../models/Recipe.js';
 import PantryItem from '../models/PantryItem.js';
-import { generateRecipe as generateRecipeAI, getRecipeSuggestions as getRecipeSuggestionsAI } from '../utils/gemini.js';
+import {
+    generateRecipe as generateRecipeAI,
+    generatePantrySuggestions as getRecipeSuggestionsAI,
+} from '../utils/gemini.js';
 
 /**
  * Generate a new recipe
@@ -16,13 +19,12 @@ export const generateRecipe = async (req, res, next) => {
             cookingTime = 'medium',
         } = req.body;
 
-        let finalIngredients = [...ingredients];
+        const baseIngredients = Array.isArray(ingredients) ? ingredients : [];
+        let finalIngredients = [...baseIngredients];
 
-        // Add pantry ingredients if requested
         if (usePantryIngredients) {
-            const pantryItems = await PantryItem.findByUserId(user.id);
-            const pantryIngredientNames = pantryItems.map(item => item.name);
-
+            const pantryItems = await PantryItem.findByUserId(req.user.id);
+            const pantryIngredientNames = pantryItems.map((item) => item.name);
             finalIngredients = [...new Set([...finalIngredients, ...pantryIngredientNames])];
         }
 
@@ -33,30 +35,26 @@ export const generateRecipe = async (req, res, next) => {
             });
         }
 
-        //Generate recipe using AI
-        const recipe = await generateRecipeAI({
-            ingredients: finalIngredients,
-            dietaryRestrictions,
-            cuisineType,
-            servings,
-            cookingTime,
-        });
+        const diets = Array.isArray(dietaryRestrictions) ? dietaryRestrictions : [];
+        const cuisine = cuisineType ?? 'Any';
+
+        const recipe = await generateRecipeAI(
+            finalIngredients,
+            diets,
+            cuisine,
+            Number(servings) || 4,
+            cookingTime
+        );
 
         res.json({
             success: true,
             message: 'Recipe generated successfully',
-            data: {recipe}
+            data: { recipe },
         });
-    }
-    catch (error) {
+    } catch (error) {
         next(error);
     }
-
-
-        
-        
-        
-    }
+};
 
 /**
  * Get recipe suggestions
@@ -99,7 +97,7 @@ export const saveRecipe = async (req, res, next) => {
  */
 export const getRecipes = async (req, res, next) => {
     try {
-        const {search, cuisineType, difficulty, maxCookTime, sortBy, sortOrder, page, limit} = req.query;
+        const {search, cuisineType, difficulty, maxCookTime, sortBy, sortOrder, page, limit, offset} = req.query;
         const recipes = await Recipe.findByUserId(req.user.id, {
             search,
             cuisineType,

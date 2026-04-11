@@ -32,6 +32,16 @@ app.use('/api/recipes', recipeRoutes);
 app.use('/api/meal-plans', mealPlanRoutes);
 app.use('/api/shopping-list', shoppingListRoutes);
 
+// JSON error responses (so clients can show err.response.data.message)
+app.use((err, req, res, next) => {
+  console.error(err);
+  const status = err.status || err.statusCode || 500;
+  res.status(status).json({
+    success: false,
+    message: err.message || 'Internal server error',
+  });
+});
+
 // Start server
 const PORT = process.env.PORT || 8000;
 

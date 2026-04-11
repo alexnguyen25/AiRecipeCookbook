@@ -15,7 +15,7 @@ router.get('/', recipeController.getRecipes);
 router.get('/recent', recipeController.getRecentRecipes);
 router.get('/stats', recipeController.getRecipeStats);
 router.get('/:id', recipeController.getRecipeById);
-router.post('/', recipeController.createRecipe);
+router.post('/', recipeController.saveRecipe);
 router.put('/:id', recipeController.updateRecipe);
 router.delete('/:id', recipeController.deleteRecipe);
 
