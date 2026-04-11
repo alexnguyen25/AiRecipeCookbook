@@ -46,12 +46,14 @@ export const register = async (req, res, next) => {
     res.status(201).json({
       success: true,
       message: 'User registered successfully.',
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name
-      },
-      token
+      data: {
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name
+        },
+        token
+      }
     });
   } catch (error) {
     next(error);
@@ -101,6 +103,28 @@ export const login = async (req, res, next) => {
         },
         token
       }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const requestPasswordReset = async (req, res, next) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required.'
+      });
+    }
+
+    await User.findByEmail(email);
+
+    res.json({
+      success: true,
+      message: 'If an account exists with this email, a password reset email has been sent.'
     });
   } catch (error) {
     next(error);

@@ -1,6 +1,8 @@
 import dotenv from 'dotenv';
 import express from 'express';
 import cors from 'cors';
+import authRoutes from './routes/auth.js';
+import userRoutes from './routes/users.js';
 
 // Load environment variables from .env
 dotenv.config();
@@ -17,6 +19,10 @@ app.use(express.urlencoded({ extended: true }));
 app.get('/', (req, res) => {
   res.json({ message: 'AI Recipe Cookbook API' });
 });
+
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
 
 // Start server
 const PORT = process.env.PORT || 8000;

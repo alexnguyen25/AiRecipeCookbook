@@ -1,4 +1,4 @@
-import db from '../config/db';
+import db from '../config/db.js';
 
 class UserPreferences {
     /**
@@ -22,29 +22,29 @@ class UserPreferences {
             allergies = $3,
             preferred_cuisines = $4,
             default_servings = $5,
-            measurement_unit = $6,
-            RETURNING *`
+            measurement_unit = $6
+            RETURNING *`,
             [userId, dietaryRestrictions, allergies, preferredCuisines, defaultServings, measurementUnit]
         );
 
         return result.rows[0];
-        }
-
-        static async findByUserId(userId) {
-            const result = await db.query(
-                `SELECT * FROM user_preferences WHERE user_id = $1`,
-                [userId]
-            );
-
-            return result.rows[0];
-        }
-        
-        static async delete(userId) {
-            await db.query(
-                `DELETE FROM user_preferences WHERE user_id = $1`,
-                [userId]
-            );
-        }
     }
 
-    export default UserPreferences;
+    static async findByUserId(userId) {
+        const result = await db.query(
+            `SELECT * FROM user_preferences WHERE user_id = $1`,
+            [userId]
+        );
+
+        return result.rows[0];
+    }
+
+    static async delete(userId) {
+        await db.query(
+            `DELETE FROM user_preferences WHERE user_id = $1`,
+            [userId]
+        );
+    }
+}
+
+export default UserPreferences;

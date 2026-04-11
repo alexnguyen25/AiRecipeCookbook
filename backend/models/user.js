@@ -1,5 +1,5 @@
-import db from '../config/db';
-import bcrypt from 'bcrypt';
+import db from '../config/db.js';
+import bcrypt from 'bcryptjs';
 
 class User {
     static async create( {email, password, name}) {
@@ -16,6 +16,7 @@ class User {
 
     static async findByEmail(email) {
         const result = await db.query('SELECT id, email, password_hash, name, created_at FROM users WHERE email = $1', [email]);
+        return result.rows[0];
     }
 
     static async findById(id) {
@@ -23,9 +24,7 @@ class User {
         return result.rows[0];
     }
 
-    static async update(id, {email, name}) {
-        const {name, email} = updates;
-
+    static async update(id, { email, name }) {
         const result = await db.query(
             `UPDATE users
             SET name = COALESCE($1, name),
