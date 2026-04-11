@@ -3,20 +3,13 @@ import express from 'express';
 import cors from 'cors';
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
-
-// Load environment variables from .env
-dotenv.config();
-
-// Import routes
-import authRoutes from './routes/auth.js';
-import userRoutes from './routes/users.js';
 import pantryRoutes from './routes/pantry.js';
 import recipeRoutes from './routes/recipes.js';
 import mealPlanRoutes from './routes/mealPlans.js';
 import shoppingListRoutes from './routes/shoppingList.js';
 
-// Protected routes
-router.use(authMiddleware);
+// Load environment variables from .env
+dotenv.config();
 
 // Create Express app
 const app = express();
